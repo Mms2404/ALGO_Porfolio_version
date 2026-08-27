@@ -6,14 +6,14 @@ A running record of every bug found (static review + live runtime) and how each 
 
 ## Pre-deployment (static code review)
 
-### 1. Strategy C crash — `AttributeError` on first run
-**File:** `apps/strategies/strategy_c.py`
-**Symptom:** `StrategyC.run()` referenced `self.instrument`, but `__init__` never set it — every real invocation would crash immediately.
-**Fix:** Added `instrument` param to `__init__`/`run_strategy_c()`/`run_strategy_c_task`, matching the pattern already used in `strategy_b.py`/`strategy_a.py`.
+### 1. Jackpot crash — `AttributeError` on first run
+**File:** `apps/strategies/jackpot.py`
+**Symptom:** `JackpotStrategy.run()` referenced `self.instrument`, but `__init__` never set it — every real invocation would crash immediately.
+**Fix:** Added `instrument` param to `__init__`/`run_jackpot()`/`run_jackpot_task`, matching the pattern already used in `opening_bell.py`/`strangle.py`.
 
 ### 2. `_build_legs()` silently dropped the futures leg
 **File:** `apps/execution/executor.py`
-**Symptom:** `overnight_strategy` (PUT + FUTURES) only ever got its PUT leg executed — the futures leg never generated an order, execution row, or notification, in LIVE mode.
+**Symptom:** `stock_hedge` (PUT + FUTURES) only ever got its PUT leg executed — the futures leg never generated an order, execution row, or notification, in LIVE mode.
 **Fix:** Extended `_build_legs()` to recognize `fut_symbol`/`fut_token`, with enforced ordering (PUT before FUT on entry, FUT before PUT on exit, per your compulsory-order requirement).
 
 ### 3. Notification text showed a bogus strike for FUTURES legs
@@ -43,14 +43,14 @@ A running record of every bug found (static review + live runtime) and how each 
 **Symptom:** Each strategy hardcoded one `FEED_ACCOUNTS[i]` — if that account was rate-limited or blocked, the whole strategy aborted.
 **Fix:** New `login_feed_account()` tries every configured feed account in order, falling through on failure.
 
-### 7. Duplicate scheduled-task invocation
+### 7. Duplicate `run_strangle_task` invocation
 **Found:** live DRY run, 2026-07-13
-**Symptom:** Two separate Celery workers ran the same scheduled Strategy A task concurrently — each did its own scrip master download, feed login, and websocket connection. The `signals` table's unique constraint correctly blocked the second one's ENTRY/EXIT from actually firing, so no duplicate trade reached the user — but the second run still burned ~86 minutes of a worker slot, a feed connection, and a scrip master download for nothing.
+**Symptom:** Two separate Celery workers ran the same scheduled Strangle task concurrently — each did its own scrip master download, feed login, and websocket connection. The `signals` table's unique constraint correctly blocked the second one's ENTRY/EXIT from actually firing, so no duplicate trade reached the user — but the second run still burned ~86 minutes of a worker slot, a feed connection, and a scrip master download for nothing.
 **Root cause of the double-firing itself:** never fully identified — flagged as worth checking Beat's own startup logs.
 **Related fix:** `--concurrency=5` (see #8) reduces the chance of this starving other strategies even if it recurs.
 
 ### 8. Too few Celery worker slots (H-3)
-**Symptom:** Refreshing tokens + Strategy A + Strategy B scheduled minutes apart could exceed default worker concurrency, causing later tasks to queue for hours behind an earlier long-running strategy.
+**Symptom:** Refreshing tokens + Strangle + Opening Bell scheduled minutes apart could exceed default worker concurrency, causing later tasks to queue for hours behind an earlier long-running strategy.
 **Fix:** Documented and adopted `celery -A algobackend worker --concurrency=5`.
 
 ### 9. Shared feed architecture — explored, not built
@@ -75,7 +75,7 @@ A running record of every bug found (static review + live runtime) and how each 
 **Fix:** `_process_user()` now fetches live balance once per user (LIVE mode only) and compares against total required margin before placing any leg; insufficient users are skipped and notified.
 
 ### 13. Partial fills could leave naked, unhedged positions
-**Found:** live LIVE run, 2026-07-16 (INDEX_2 Strategy A) — insufficient funds meant CE placed but PE rejected, leaving a naked CE.
+**Found:** live LIVE run, 2026-07-16 (SENSEX Strangle) — insufficient funds meant CE placed but PE rejected, leaving a naked CE.
 **File:** `apps/execution/executor.py`
 **Fix:** `_fan_out_exit()` now checks, per user, which legs actually succeeded at entry (`signal_executions.status`) before the EXIT fan-out — a leg that was never filled is never sold, and a user with zero filled legs is skipped entirely at exit.
 
@@ -85,11 +85,11 @@ A running record of every bug found (static review + live runtime) and how each 
 **Fix:** Check `status IN ("placed", "dry")`.
 
 ### 15. Missing `return` after a blocked duplicate ENTRY — corrupted EXIT signals
-**Found:** live DRY run, 2026-08-17 (Strategy A)
-**Files:** `apps/strategies/strategy_a.py`, `strategy_b.py`, `strategy_c.py`
+**Found:** live DRY run, 2026-08-17 (Strangle)
+**Files:** `apps/strategies/strangle.py`, `opening_bell.py`, `jackpot.py`
 **Symptom:** When a strategy's own ENTRY was correctly blocked as a duplicate for the day, the code logged it but didn't stop — it kept monitoring its own (different) prices and eventually wrote a real EXIT signal, with entry prices/tokens that didn't match the actual accepted ENTRY.
 **Fix:** Added `return` (with proper stream/task cleanup) immediately after a blocked ENTRY, in all three index strategies.
-**Still open:** why a second Strategy A run happened at all that morning was never identified.
+**Still open:** why a second Strangle run happened at all that morning was never identified.
 
 ---
 
@@ -118,19 +118,19 @@ A running record of every bug found (static review + live runtime) and how each 
 **Symptom:** `"Not a gzipped file (b'{\"')"` — the object in Storage was written before the gzip-compression fix shipped.
 **Status:** Not a bug requiring a fix — the existing fallback (treat as unreadable → re-download → re-upload correctly gzipped) handled it automatically; self-healed after one run.
 
-### 21. 12-second delay before Strategy A's ENTRY signal
+### 21. 12-second delay before Strangle's ENTRY signal
 **Found:** live DRY run, 2026-08-04
 **Symptom:** ~5.2s of the delay traced to one worker process's cold Supabase Storage fetch of the scrip master (a cross-process cache miss).
 **Fix:** Gzip-compressed the cached object (measured 24x size reduction, 30.7MB → 1.3MB) + a Celery Beat task at 7:00 AM that fires multiple preload copies aiming to warm every worker process's memory ahead of market open.
 **Note:** Not a guaranteed sub-3-second fix on its own — several sequential Supabase REST calls elsewhere in the pipeline still add up; flagged as a possible next optimization if needed.
 
 ### 22. Stale `celerybeat-schedule` file causing unplanned/duplicate real fires
-**Found:** live runs, 2026-08-20 (INDEX_2 Strategy A, twice in one morning)
-**Symptom:** At 9:18, a Strategy A run got `409 Conflict` on its own ENTRY — meaning a real INDEX_2 ENTRY already existed before this run, despite no manual or expected trigger having happened yet that day. After deleting that row and changing Strategy A's Beat time to 9:30, a *second* real, independently-running instance appeared again — the visible 9:30 run's own EXIT got `409 Conflict` at 9:34:38, meaning another live instance had already reached EXIT first.
+**Found:** live runs, 2026-08-20 (SENSEX Strangle, twice in one morning)
+**Symptom:** At 9:18, a Strangle run got `409 Conflict` on its own ENTRY — meaning a real SENSEX ENTRY already existed before this run, despite no manual or expected trigger having happened yet that day. After deleting that row and changing Strangle's Beat time to 9:30, a *second* real, independently-running instance appeared again — the visible 9:30 run's own EXIT got `409 Conflict` at 9:34:38, meaning another live instance had already reached EXIT first.
 **Root cause:** Celery Beat persists "last run" state to a local `celerybeat-schedule` file, tied to whatever crontab timing was configured when that state was last written. Restarting the worker/beat processes without deleting this file — after changing a strategy's schedule, or even just restarting mid-session — can make Beat treat a task as "overdue" against stale state and fire it for real, independent of any deliberate trigger.
 **Fix:** No code change — this is an operational discipline issue. `celery.py` already carries a comment warning about this (`del celerybeat-schedule` after any schedule change); the actual miss was not applying it consistently on *every* restart where timing might have shifted, not just the one restart where code was edited.
-**Confirmed:** code was independently checked and ruled out as the cause — `create_signal(kind="EXIT", ...)` in `strategy_a.py` is called exactly once, in a strictly linear sequence after `self._stop.wait()` unblocks; nothing in `_on_tick()`/`_time_monitor()` can trigger a duplicate call from within a single instance.
-**Likely also explains item #15** (2026-08-17 double Strategy A invocation) and **item #7** (2026-07-13 double invocation) — same fingerprint (a second, independently-running real instance appearing without a deliberate second trigger), though not confirmed retroactively for those specific dates.
+**Confirmed:** code was independently checked and ruled out as the cause — `create_signal(kind="EXIT", ...)` in `strangle.py` is called exactly once, in a strictly linear sequence after `self._stop.wait()` unblocks; nothing in `_on_tick()`/`_time_monitor()` can trigger a duplicate call from within a single instance.
+**Likely also explains item #15** (2026-08-17 double Strangle invocation) and **item #7** (2026-07-13 double invocation) — same fingerprint (a second, independently-running real instance appearing without a deliberate second trigger), though not confirmed retroactively for those specific dates.
 
 ### 23. `{"status": "completed"}` misread as "a trade happened" — not a bug, a naming clarification
 **Symptom:** Confusion after a blocked-duplicate run: the task returned `{"status": "completed"}` even though it did nothing (correctly stopped at a blocked ENTRY).
@@ -161,8 +161,8 @@ A running record of every bug found (static review + live runtime) and how each 
 ## Known open items (deferred by choice, not fixed)
 
 - Debug `print()` statements leaking API key/JWT fragments (`apps/accounts/views.py`)
-- `producttype` always `CARRYFORWARD`, even for same-day strategies (Strategy A/Strategy B) — accepted risk for now
+- `producttype` always `CARRYFORWARD`, even for same-day strategies (Strangle/Opening Bell) — accepted risk for now
 - DRF endpoints still `AllowAny`; no enforced HTTPS/security headers; `SECRET_KEY` has an insecure fallback default
-- `overnight_strategy_v2`'s 4-leg `_build_legs` support — waiting on your strategy spec doc
+- `stock_future_hedge`'s 4-leg `_build_legs` support — waiting on your strategy spec doc
 - Auto-unwind (reversal order) safety net for partial fills mid-sequence — discussed, questions asked (buffer %, failure handling), never implemented
 - **Standing operational practice, not a code fix:** delete `celerybeat-schedule` on every restart where any strategy's timing might have shifted — not just the one restart where code was actually edited (see #22). Missing this is the most likely explanation for every unplanned duplicate-instance incident logged above (#7, #15, #22).

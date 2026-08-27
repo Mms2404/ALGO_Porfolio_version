@@ -1,6 +1,6 @@
 # Algo Trading Platform — Portfolio Edition
 
-A multi-user automated options trading backend: Django + Celery + Redis + Supabase, with a Flutter mobile client. This is a **sanitized version** of a real, live production system — built to demonstrate the engineering, not the trading strategy itself. Strategy names, exact profit/stop-loss thresholds, and entry/exit logic have been replaced with illustrative placeholders throughout. Everything else — the architecture, the concurrency handling, the bug log — reflects the real, deployed system.
+A multi-user automated options trading backend: Django + Celery + Redis + Supabase, with a Flutter mobile client. This is a **sanitized version** of a real, live production system, built to demonstrate the engineering, not give away the trading edge. What's kept as-is: strategy names, traded indices (NIFTY/SENSEX), general scheduling cadence — these are standard options-trading concepts, not secrets. What's redacted: the actual entry/exit decision logic, exact profit-target/stop-loss thresholds, and strike-selection math — see `demo_strategy.py` for the real plumbing every strategy shares, with placeholder logic standing in for the real thing.
 
 ## What it does
 
@@ -12,15 +12,25 @@ One strategy engine runs *once* per signal, independent of how many users are su
 apps/
   execution/     signal → fan-out-per-user executor (DRY/LIVE switch, idempotency,
                  balance verification, position-verified exits)
-  strategies/    strategy engines (real logic redacted — see demo_strategy.py
-                 for the shared plumbing every real strategy uses)
-  marketdata/    instrument reference data, caching layer (Supabase Storage,
-                 gzip-compressed, survives redeploys)
+  strategies/    strategy engines (real decision logic redacted — demo_strategy.py
+                 shows the shared plumbing every real strategy uses; base.py,
+                 test_strategy.py included as-is)
+  marketdata/    scrip master caching (Supabase Storage, gzip-compressed, survives
+                 redeploys), expiry resolution, ATM/OTM strike math, live feed
+                 (REST + WebSocket), NIFTY-50 reference data
   scheduling/    Celery tasks + Beat schedule
+  admin_api/     admin-only trigger endpoints (preview/confirm pattern, role-gated)
+  accounts/      user-facing account verification + balance endpoints
 core/
-  angel/         broker adapter — auth, orders, multi-account fallback
+  angel/         broker adapter — SmartAPI auth, order placement, balance (RMS),
+                 order-status stream, multi-account rate-limit fallback
   supabase/      single DB access point, server-side JWT verification
+  crypto/        RSA-OAEP (static creds) + Fernet (session tokens)
+  conditions.py  market-hours/holiday gate, per-user balance gate
+  notifications/responses/logging  small shared infra utilities
 ```
+
+Everything under `core/angel/` and `apps/marketdata/` implements Angel One's *publicly documented* SmartAPI — auth flow, order placement, quote/websocket streaming — included as-is since there's nothing proprietary in wiring up a published broker API. The actual trading logic lives entirely in `apps/strategies/`, and that's the part that's redacted.
 
 ## Engineering highlights
 
@@ -38,6 +48,10 @@ core/
 ## Stack
 
 Django · Celery · Redis · Supabase (Postgres + Storage + Auth) · Flutter · Railway (deployment)
+
+## Config
+
+Both `.env.example` (blank) and `.env` (filled with fake, freshly-generated placeholder values — including a newly-generated RSA keypair and Fernet key, never used against anything real) are included so the required configuration shape is visible without reconstruction. Nothing in either file connects to a real Supabase project, broker account, or domain.
 
 ## What's *not* here
 

@@ -1,5 +1,5 @@
 """Pick which index (NIFTY or SENSEX) the index-option strategies trade
-each day (Strategy A, Strategy B, Strategy C -- anything that trades an
+each day (Strangle, Opening Bell, Jackpot -- anything that trades an
 ATM/OTM CE+PE pair on an index, rather than a fixed instrument).
 
 Compares both indices' nearest upcoming expiry date and picks whichever
@@ -85,15 +85,15 @@ def select_nearest_expiry_instrument() -> str:
         chosen = "NIFTY"   # NIFTY wins ties
 
     logger.info(
-        "Instrument selection: NIFTY expiry=%s, SENSEX expiry=%s -> chose %s",
+        "Strangle instrument selection: NIFTY expiry=%s, SENSEX expiry=%s -> chose %s",
         nifty_expiry_str, sensex_expiry_str, chosen,
     )
     return chosen
 
 
 def get_todays_instrument() -> str:
-    """What today's index-option strategies (Strategy A, Strategy B,
-    Strategy C -- generic names, illustrative) should trade today.
+    """What today's index-option strategies (Strangle, Opening Bell,
+    Jackpot) should trade today.
 
     Reads the file cache written by select_daily_instrument_task (run
     earlier that same morning). If it's missing for any reason
@@ -105,7 +105,7 @@ def get_todays_instrument() -> str:
         return cached
 
     logger.warning(
-        "No cached instrument pick for today — computing it now "
+        "No cached Strangle instrument for today — computing it now "
         "instead of using this morning's selection task"
     )
     instrument = select_nearest_expiry_instrument()

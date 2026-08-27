@@ -1,11 +1,12 @@
 """Celery app + Beat schedule.
 
-NOTE (portfolio version): strategy names and exact schedule times below
-are illustrative placeholders. The real production system trades live
-index options on a real schedule; those specifics are the actual trading
-edge and aren't published here. Everything else -- the scheduling
-architecture, the caching/preload pattern, the django.setup() handling,
-the manual-trigger examples -- reflects the real, deployed system as-is.
+NOTE (portfolio version): the actual entry/exit decision logic, exact
+profit-target/stop-loss thresholds, and strike-selection math are the
+real trading edge and aren't published here (see apps/strategies/
+demo_strategy.py for the shared plumbing every real strategy uses,
+with placeholder decision logic standing in). Strategy names, traded
+indices, and the general scheduling architecture below are real --
+these are standard options-trading concepts/identifiers, not secrets.
 """
 
 import os
@@ -69,26 +70,28 @@ app.conf.beat_schedule = {
         "schedule": crontab(hour=9, minute=11, day_of_week="1-5"),
     },
 
-    # Strategy A -- illustrative placeholder for a real scheduled strategy.
-    # "mode": "LIVE" or "DRY" is the live/dry switch, set per-strategy
+    # Opening Bell: fires at market open, Mon-Fri. Instrument (NIFTY/SENSEX)
+    # decided each morning by select-daily-instrument above.
+    # "mode": "LIVE" or "DRY" -- the live/dry switch, set per-strategy
     # right here, not read from a global env var.
-    "run-strategy-a": {
-        "task": "apps.scheduling.tasks.run_strategy_a_task",
-        "schedule": crontab(hour=9, minute=15, day_of_week="1-5"),
+    "run-opening-bell": {
+        "task": "apps.scheduling.tasks.run_opening_bell_task",
+        "schedule": crontab(hour=9, minute=22, day_of_week="1-5"),
         "kwargs": {"mode": "DRY"},
     },
 
-    # Strategy B -- illustrative placeholder.
-    "run-strategy-b": {
-        "task": "apps.scheduling.tasks.run_strategy_b_task",
+    # Strangle: fires shortly after market open, Mon-Fri. Instrument
+    # decided each morning by select-daily-instrument above.
+    "run-strangle": {
+        "task": "apps.scheduling.tasks.run_strangle_task",
         "schedule": crontab(hour=9, minute=20, day_of_week="1-5"),
         "kwargs": {"mode": "DRY"},
     },
 
-    # # Strategy C -- illustrative placeholder, disabled by default.
-    # "run-strategy-c": {
-    #     "task": "apps.scheduling.tasks.run_strategy_c_task",
-    #     "schedule": crontab(hour=14, minute=30, day_of_week="1-5"),
+    # # Jackpot: fires mid-afternoon, Mon-Fri. Disabled by default.
+    # "run-jackpot": {
+    #     "task": "apps.scheduling.tasks.run_jackpot_task",
+    #     "schedule": crontab(hour=14, minute=40, day_of_week="1-5"),
     #     "kwargs": {"mode": "DRY"},
     # },
 
@@ -106,7 +109,7 @@ app.conf.beat_schedule = {
 }
 
 # To manually trigger a task right now (no Beat entry, no restart needed):
-#     celery -A algobackend call apps.scheduling.tasks.run_strategy_a_task
+#     celery -A algobackend call apps.scheduling.tasks.run_strangle_task
 
 # IMPORTANT: delete the celerybeat-schedule file any time you change a
 # schedule above (or restart mid-session) -- Beat persists "last run"

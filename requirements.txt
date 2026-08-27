@@ -1,0 +1,29 @@
+# Pin to YOUR installed versions where possible (run `pip freeze` and align).
+# Django is pinned to match your current project; others use compatible ranges.
+
+Django==5.2.8
+djangorestframework>=3.15,<4
+django-cors-headers>=4.4,<5
+
+# async / scheduling
+celery>=5.4,<6
+redis>=5.0,<6
+
+# config / db
+python-dotenv>=1.0
+dj-database-url>=2.2
+
+# external services
+supabase>=2.6
+cryptography>=43.0
+
+# http / sockets (broker REST + websocket feed)
+requests>=2.32
+aiohttp>=3.10
+websockets>=13.0
+
+# misc
+pytz>=2024.1
+
+# serving (prod WSGI)
+gunicorn>=23.0
